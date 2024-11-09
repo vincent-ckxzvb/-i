@@ -1,0 +1,90 @@
+<!DOCTYPE html>
+<html>
+<head>
+<title>Click for Message</title>
+<style>
+body {
+font-family: Arial, sans-serif;
+height: 100vh;
+margin: 0;
+display: flex;
+justify-content: center;
+align-items: center;
+flex-direction: column;
+background-image: linear-gradient(to bottom, #f0f0f0, #ccc);
+}
+
+.button {
+background-color: #4CAF50;
+color: #fff;
+padding: 10px 20px;
+border: none;
+border-radius: 10px;
+cursor: pointer;
+box-shadow: 0px 0px 10px rgba(0,0,0,0.2);
+margin-bottom: 20px;
+}
+
+.button:hover {
+background-color: #3e8e41;
+}
+
+.message {
+display: none;
+background-color: #fff;
+padding: 10px;
+border: 1px solid #ddd;
+border-radius: 10px;
+box-shadow: 0px 0px 10px rgba(0,0,0,0.2);
+}
+
+.typing {
+font-family: monospace;
+white-space: pre-wrap;
+overflow: hidden;
+}
+</style>
+</head>
+<body>
+
+<button class="button" onclick="showMessage()">Click Me!</button>
+
+<div class="message" id="message">
+<span id="typing-text" class="typing"></span>
+</div>
+
+<audio id="music" src="gc.mp3" autoplay="false" loop></audio>
+
+<script>
+let message = "hello Jadey,\n\ngusto ko lang sabihin sa'yo na pwede bang magpahinga na lang muna tayo?\n\nkasi hindi ko na talaga kaya, lagi nalang tayong nagkakaganito, at nawala na talaga yung spark sa isa't isa. palaging misunderstanding, at hindi na tayo nagkakaintindihan. magpahinga muna tayo ng 1 week, tapos tignan natin kung ano ang mangyayari, kung ikakabuti ba natin o ikakasama ng relasyon natin. marami pang ibang solusyon, pero ito lang yung naiisip ko sa ngayon.\n\ntapos, hindi ko nagustuhan yung ginawa mo kanina, kasi simpleng greet lang naman 'yun, ganun na kaagad naging reaksyon mo. hindi ka man lang nagtanong, na turn off lang ako sa part na 'yun, kasi okay na tayo e, pero mas pinili mo pang mag-ganun. pansin ko din, tinanggal mo na pala yung nickname ko sa bio mo, okay lang naman 'yun. tapos, yung streak pala natin, ewan ko na lang dun, okay lang naman saakin na i-continue pa natin yun, pero nasa'yo na lang kung balak mo pang ituloy. kung mayroon kaman ire-reply sa message kong ito mag-chat ka na lang sa messenger.";
+let index = 0;
+let typingSpeed = 50; //ms
+let repeatCount = 0;
+let maxRepeats = 2;
+
+function showMessage() {
+document.getElementById("message").style.display = "block";
+document.getElementById("music").play();
+typeMessage();
+}
+
+function typeMessage() {
+if (repeatCount < maxRepeats) {
+if (index < message.length) {
+document.getElementById("typing-text").innerHTML += message[index];
+index++;
+setTimeout(typeMessage, typingSpeed);
+} else {
+index = 0;
+repeatCount++;
+setTimeout(function() {
+document.getElementById("typing-text").innerHTML = "";
+typeMessage();
+}, 2000); // pause for 2 seconds
+}
+}
+}
+</script>
+
+</body>
+</html>
