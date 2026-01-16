@@ -11,7 +11,7 @@ from telegram.ext import (
 
 # ================== CONFIG ==================
 BOT_TOKEN = os.getenv("BOT_TOKEN")
-BOT_USERNAME = "think2EarnBot" # Change this to your actual bot username without the '@'
+BOT_USERNAME = "think2EarnBot" 
 ADMIN_ID = 775857744 
 REFERRAL_REWARD = 48.88 
 MIN_WITHDRAW = 1000
@@ -24,7 +24,6 @@ ADMIN_PAYMAYA = "09939775174"
 REWARDS = {"easy": 20, "medium": 40, "hard": 88, "logic": 88}
 
 # ================== RENDER PORT FIX ==================
-# This satisfies Render's "No open ports detected" error
 class HealthCheckHandler(BaseHTTPRequestHandler):
     def do_GET(self):
         self.send_response(200)
@@ -88,6 +87,10 @@ def main_menu_keyboard():
     ]
     return ReplyKeyboardMarkup(keyboard, resize_keyboard=True)
 
+# New Keyboard for cancelling actions
+def cancel_keyboard():
+    return ReplyKeyboardMarkup([[KeyboardButton("❌ Cancel")]], resize_keyboard=True)
+
 def admin_approval_keyboard(user_id, amount):
     return InlineKeyboardMarkup([
         [InlineKeyboardButton("✅ Approve Fee", callback_data=f"app_{user_id}_{amount}")],
@@ -128,65 +131,37 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     uid = update.effective_user.id
     text = update.message.text
 
-    # 1. Answer Check (Logic & Math)
-    if uid in pending and "answer" in pending[uid]:
-        data = pending.pop(uid)
-        if text.strip().lower() == str(data["answer"]).lower():
-            reward = REWARDS[data["level"]]
-            cur.execute("UPDATE users SET balance = balance + ? WHERE user_id = ?", (reward, uid))
-            db.commit()
-            await update.message.reply_text(f"✨ <b>Correct!</b>\nYou earned ₱{reward}.", parse_mode="HTML")
-        else:
-            await update.message.reply_text(f"❌ <b>Incorrect.</b>\nThe answer was: <i>{data['answer']}</i>", parse_mode="HTML")
-        return
-
-    # 2. Withdrawal Sequence
-    if uid in pending and "step" in pending[uid]:
-        if pending[uid]["step"] == "GET_NUMBER":
-            pending[uid]["wallet_number"] = text
-            pending[uid]["step"] = "GET_AMOUNT"
-            await update.message.reply_text("💰 Enter withdrawal amount (Min: ₱1000):")
-            return
+    # --- PRIORITY 1: Menu Buttons (This fixes the bug) ---
+    # If the user clicks a menu button, we clear any 'pending' action first.
+    menu_options = ["🧮 Math", "🧠 Logic", "💰 Balance", "👥 Referrals", "📜 Rules", "💸 Withdraw", "🏆 Leaderboard"]
+    
+    if text in menu_options or text == "❌ Cancel":
+        if uid in pending:
+            pending.pop(uid)
         
-        if pending[uid]["step"] == "GET_AMOUNT":
-            try:
-                amt = float(text)
-                cur.execute("SELECT balance FROM users WHERE user_id=?", (uid,))
-                bal = cur.fetchone()[0]
-                if amt < MIN_WITHDRAW or bal < amt:
-                    await update.message.reply_text("❌ Insufficient balance or amount too low.")
-                    return
-                pending[uid].update({"amt": amt, "step": "AWAIT_PROOF"})
-                method = pending[uid]["wd_method"]
-                admin_num = ADMIN_GCASH if method == "GCash" else ADMIN_PAYMAYA
-                msg = (
-                    f"🛡 <b>Verification Required</b>\n\n"
-                    f"To process your ₱{amt} withdrawal, pay the verification fee:\n"
-                    f"• Amount: <b>₱{WITHDRAW_FEE}</b>\n"
-                    f"• {method}: <code>{admin_num}</code>\n\n"
-                    "📸 <b>Send the receipt screenshot below:</b>"
-                )
-                await update.message.reply_text(msg, parse_mode="HTML")
-            except: 
-                await update.message.reply_text("❌ Invalid number.")
+        if text == "❌ Cancel":
+            await update.message.reply_text("Process cancelled.", reply_markup=main_menu_keyboard())
             return
 
-    # 3. Menu Options
+    # Now handle the actual menu logic
     if text == "🧠 Logic":
         q, a = random.choice(LOGIC_QUESTIONS)
         pending[uid] = {"answer": a.lower(), "level": "logic"}
-        await update.message.reply_text(f"<b>Riddle:</b>\n{q}", parse_mode="HTML")
+        await update.message.reply_text(f"<b>Riddle:</b>\n{q}\n\n<i>(Type your answer below or click Cancel)</i>", reply_markup=cancel_keyboard(), parse_mode="HTML")
+        return
 
     elif text == "🧮 Math":
         await update.message.reply_text("Select Level:", reply_markup=InlineKeyboardMarkup([
             [InlineKeyboardButton("Easy ₱20", callback_data="math_easy"), InlineKeyboardButton("Hard ₱88", callback_data="math_hard")]
         ]))
+        return
 
     elif text == "💰 Balance":
         cur.execute("SELECT balance FROM users WHERE user_id=?", (uid,))
         res = cur.fetchone()
         bal = res[0] if res else 0
         await update.message.reply_text(f"💳 <b>Wallet Balance:</b> ₱{bal:.2f}", parse_mode="HTML")
+        return
 
     elif text == "👥 Referrals":
         link = f"https://t.me/{BOT_USERNAME}?start={uid}"
@@ -198,6 +173,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
             f"📈 Total Referrals: {total_refs}", 
             parse_mode="HTML"
         )
+        return
 
     elif text == "📜 Rules":
         rules = (
@@ -209,11 +185,13 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
             "5. After fee, 15 more invites are needed to unlock payout."
         )
         await update.message.reply_text(rules, parse_mode="HTML")
+        return
 
     elif text == "💸 Withdraw":
         await update.message.reply_text("Choose Withdrawal Method:", reply_markup=InlineKeyboardMarkup([
             [InlineKeyboardButton("GCash", callback_data="wd_gcash"), InlineKeyboardButton("PayMaya", callback_data="wd_paymaya")]
         ]))
+        return
     
     elif text == "🏆 Leaderboard":
         cur.execute("SELECT username, balance FROM users ORDER BY balance DESC LIMIT 10")
@@ -222,6 +200,52 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         for i, r in enumerate(rows, 1): 
             lb += f"{i}. {r[0] or 'User'} — ₱{r[1]:.2f}\n"
         await update.message.reply_text(lb, parse_mode="HTML")
+        return
+
+    # --- PRIORITY 2: Process Pending States (Answers/Withdrawals) ---
+    if uid in pending:
+        # Check for Math/Logic Answers
+        if "answer" in pending[uid]:
+            data = pending.pop(uid)
+            if text.strip().lower() == str(data["answer"]).lower():
+                reward = REWARDS[data["level"]]
+                cur.execute("UPDATE users SET balance = balance + ? WHERE user_id = ?", (reward, uid))
+                db.commit()
+                await update.message.reply_text(f"✨ <b>Correct!</b>\nYou earned ₱{reward}.", reply_markup=main_menu_keyboard(), parse_mode="HTML")
+            else:
+                await update.message.reply_text(f"❌ <b>Incorrect.</b>\nThe answer was: <i>{data['answer']}</i>", reply_markup=main_menu_keyboard(), parse_mode="HTML")
+            return
+
+        # Check for Withdrawal Sequence
+        if "step" in pending[uid]:
+            if pending[uid]["step"] == "GET_NUMBER":
+                pending[uid]["wallet_number"] = text
+                pending[uid]["step"] = "GET_AMOUNT"
+                await update.message.reply_text("💰 Enter withdrawal amount (Min: ₱1000):", reply_markup=cancel_keyboard())
+                return
+            
+            if pending[uid]["step"] == "GET_AMOUNT":
+                try:
+                    amt = float(text)
+                    cur.execute("SELECT balance FROM users WHERE user_id=?", (uid,))
+                    bal = cur.fetchone()[0]
+                    if amt < MIN_WITHDRAW or bal < amt:
+                        await update.message.reply_text("❌ Insufficient balance or amount too low. Enter a valid amount or click Cancel:")
+                        return
+                    pending[uid].update({"amt": amt, "step": "AWAIT_PROOF"})
+                    method = pending[uid]["wd_method"]
+                    admin_num = ADMIN_GCASH if method == "GCash" else ADMIN_PAYMAYA
+                    msg = (
+                        f"🛡 <b>Verification Required</b>\n\n"
+                        f"To process your ₱{amt} withdrawal, pay the verification fee:\n"
+                        f"• Amount: <b>₱{WITHDRAW_FEE}</b>\n"
+                        f"• {method}: <code>{admin_num}</code>\n\n"
+                        "📸 <b>Send the receipt screenshot below:</b>"
+                    )
+                    await update.message.reply_text(msg, reply_markup=cancel_keyboard(), parse_mode="HTML")
+                except ValueError: 
+                    await update.message.reply_text("❌ Invalid number. Please enter a numeric amount:")
+                return
 
 # ================== CALLBACK HANDLER ==================
 async def on_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -236,16 +260,16 @@ async def on_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             a, b = random.randint(1, 20), random.randint(1, 20)
             ans = a + b
             pending[uid] = {"answer": ans, "level": "easy"}
-            await query.message.reply_text(f"🔢 <b>Math (Easy):</b>\nWhat is {a} + {b}?", parse_mode="HTML")
+            await query.message.reply_text(f"🔢 <b>Math (Easy):</b>\nWhat is {a} + {b}?", reply_markup=cancel_keyboard(), parse_mode="HTML")
         else:
             a, b, c = random.randint(10, 50), random.randint(10, 50), random.randint(5, 15)
             ans = (a + b) - c
             pending[uid] = {"answer": ans, "level": "hard"}
-            await query.message.reply_text(f"🔢 <b>Math (Hard):</b>\nWhat is ({a} + {b}) - {c}?", parse_mode="HTML")
+            await query.message.reply_text(f"🔢 <b>Math (Hard):</b>\nWhat is ({a} + {b}) - {c}?", reply_markup=cancel_keyboard(), parse_mode="HTML")
 
     elif data.startswith("wd_"):
         pending[uid] = {"wd_method": "GCash" if "gcash" in data else "PayMaya", "step": "GET_NUMBER"}
-        await query.message.reply_text(f"📱 Enter your {pending[uid]['wd_method']} account number:")
+        await query.message.reply_text(f"📱 Enter your {pending[uid]['wd_method']} account number:", reply_markup=cancel_keyboard())
 
     elif data.startswith("app_"): 
         _, target_id, amount = data.split("_")
@@ -277,13 +301,10 @@ async def photo_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             parse_mode="HTML",
             reply_markup=admin_approval_keyboard(uid, data['amt'])
         )
-        await update.message.reply_text("🕒 <b>Proof Sent!</b> Admin will verify your fee shortly.")
+        await update.message.reply_text("🕒 <b>Proof Sent!</b> Admin will verify your fee shortly.", reply_markup=main_menu_keyboard())
 
 if __name__ == "__main__":
-    # Start the health check server in a background thread
     threading.Thread(target=run_health_server, daemon=True).start()
-    
-    # Start the Telegram Bot
     app = ApplicationBuilder().token(BOT_TOKEN).build()
     app.add_handler(CommandHandler("start", start))
     app.add_handler(CallbackQueryHandler(on_callback))
