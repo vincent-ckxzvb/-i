@@ -2,6 +2,7 @@ import os
 import sqlite3
 import time
 import random
+
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import (
     ApplicationBuilder,
@@ -9,7 +10,7 @@ from telegram.ext import (
     CallbackQueryHandler,
     MessageHandler,
     ContextTypes,
-    filters
+    filters,
 )
 
 # ================== CONFIG ==================
@@ -273,6 +274,9 @@ async def text_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 # ================== RUN ==================
 if __name__ == "__main__":
+    if not BOT_TOKEN:
+        raise RuntimeError("BOT_TOKEN is missing")
+
     app = ApplicationBuilder().token(BOT_TOKEN).build()
 
     app.add_handler(CommandHandler("start", start))
@@ -281,4 +285,4 @@ if __name__ == "__main__":
 
     print("Think2EarnBot running...")
     app.run_polling()
-    
+
