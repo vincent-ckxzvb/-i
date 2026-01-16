@@ -13,7 +13,7 @@ from telegram.ext import (
 )
 
 # ================== CONFIG ==================
-BOT_TOKEN = os.getenv("8276060557:AAEloclb1WSAuH1q9z037YuB-j4N66HHuzI")
+BOT_TOKEN = os.getenv("BOT_TOKEN")
 BOT_USERNAME = "think2EarnBot"
 ADMIN_ID = 775857744  # REPLACE WITH YOUR REAL ID
 
