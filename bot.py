@@ -19,12 +19,13 @@ BOT_TOKEN = os.getenv("BOT_TOKEN")
 BOT_USERNAME = "think2EarnBot"
 
 ADMIN_ID = 775857744
-REFERRAL_REWARD = 100
+# Updated to match the screenshot rewards
+REFERRAL_REWARD = 48.88 
 MIN_WITHDRAW = 1000
 DAILY_LIMIT = 10
 WITHDRAW_FEE = 15
 
-REWARDS = {"easy": 20, "medium": 40, "hard": 70}
+REWARDS = {"easy": 20, "medium": 40, "hard": 88} # Hard set to 88 to match "Earn 88"
 TIME_LIMIT = {"easy": 20, "medium": 15, "hard": 10}
 
 GCASH_NUMBER = "09939775174"
@@ -37,8 +38,8 @@ cur = db.cursor()
 cur.execute("""
 CREATE TABLE IF NOT EXISTS users (
     user_id INTEGER PRIMARY KEY,
-    balance INTEGER DEFAULT 0,
-    all_time_balance INTEGER DEFAULT 0,
+    balance REAL DEFAULT 0,
+    all_time_balance REAL DEFAULT 0,
     streak INTEGER DEFAULT 0,
     daily_count INTEGER DEFAULT 0,
     last_day INTEGER DEFAULT 0
@@ -59,24 +60,7 @@ pending = {}
 LOGIC_QUESTIONS = [
     ("What has keys but no locks?", "keyboard"),
     ("What gets wetter as it dries?", "towel"),
-    ("What has hands but can't clap?", "clock"),
-    ("What runs but never walks?", "water"),
-    ("What has an eye but cannot see?", "needle"),
-    ("What has a face and two hands but no arms?", "clock"),
-    ("What comes once in a minute, twice in a moment?", "m"),
-    ("What has legs but doesn’t walk?", "table"),
-    ("What has many teeth but can’t bite?", "comb"),
-    ("What goes up but never comes down?", "age"),
-    ("What can travel around the world staying in one place?", "stamp"),
-    ("What has a neck but no head?", "bottle"),
-    ("What can you catch but not throw?", "cold"),
-    ("What has words but never speaks?", "book"),
-    ("What breaks when you say it?", "silence"),
-    ("What has a head and tail but no body?", "coin"),
-    ("What is always in front of you but can’t be seen?", "future"),
-    ("What has one eye but can’t see?", "needle"),
-    ("What has a ring but no finger?", "phone"),
-    ("What has a heart but no organs?", "artichoke"),
+    ("What has hands but can't clap?", "clock")
 ]
 
 def math_question(level):
@@ -105,23 +89,22 @@ def reset_daily(uid):
         cur.execute("UPDATE users SET daily_count=0, last_day=? WHERE user_id=?", (today(), uid))
         db.commit()
 
-# ================== UI ==================
+# ================== UI (MODIFIED TO MATCH IMAGE) ==================
 def main_menu():
-    return InlineKeyboardMarkup([
-        [InlineKeyboardButton("🧮 Math", callback_data="math"),
-         InlineKeyboardButton("🧠 Logic", callback_data="logic")],
-        [InlineKeyboardButton("💰 Balance", callback_data="balance"),
-         InlineKeyboardButton("👥 Referrals", callback_data="referrals")],
-        [InlineKeyboardButton("📜 Rules", callback_data="rules"),
-         InlineKeyboardButton("🏆 Leaderboard", callback_data="leaderboard")],
+    # Buttons are now stacked vertically as per the screenshot
+    keyboard = [
+        [InlineKeyboardButton("GUESS THE LOGO EARN 88 💸", callback_data="math")],
+        [InlineKeyboardButton("Account Balance 💰", callback_data="balance")],
+        [InlineKeyboardButton(f"Invite Friends Earn {REFERRAL_REWARD} PHP 💸", callback_data="referrals")],
         [InlineKeyboardButton("💸 Withdraw", callback_data="withdraw")]
-    ])
+    ]
+    return InlineKeyboardMarkup(keyboard)
 
 def difficulty_menu(mode):
     return InlineKeyboardMarkup([
-        [InlineKeyboardButton("🟢 Easy", callback_data=f"{mode}_easy")],
-        [InlineKeyboardButton("🟡 Medium", callback_data=f"{mode}_medium")],
-        [InlineKeyboardButton("🔴 Hard", callback_data=f"{mode}_hard")],
+        [InlineKeyboardButton("🟢 Easy (₱20)", callback_data=f"{mode}_easy")],
+        [InlineKeyboardButton("🟡 Medium (₱40)", callback_data=f"{mode}_medium")],
+        [InlineKeyboardButton("🔴 Hard (₱88)", callback_data=f"{mode}_hard")],
         [InlineKeyboardButton("⬅ Back", callback_data="back")]
     ])
 
@@ -153,9 +136,20 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         except:
             pass
 
+    # Text style matched to the screenshot promotional tone
+    promo_text = (
+        "<b>GRABE FREE 2,500 PESOS NA BIGAYAN NGAYON!</b>\n\n"
+        "NEW UPDATE TO SOBRANG LAKI NA BIGAYAN INSTANT 2,500 PESOS "
+        "AFTER VERIFYING LANG. PARA KA LANG NAG VERIFY NG GCASH.\n\n"
+        "KAIBAHAN DITO AFTER VERIFY NYO MAY MARERECEIVE KAYO AGAD "
+        "NG 2500 PESOS KAHIT ANONG VALID ID PWEDE SAFE TO DAMI NA NAKAWITHDRAW!\n\n"
+        "👇 <b>CLICK BUTTONS BELOW TO START EARNING</b> 👇"
+    )
+    
     await update.message.reply_text(
-        "🧠 Think2Earn Bot\nAnswer questions • Earn points",
-        reply_markup=main_menu()
+        promo_text,
+        reply_markup=main_menu(),
+        parse_mode="HTML"
     )
 
 # ================== BUTTON HANDLER ==================
@@ -169,23 +163,31 @@ async def buttons(update: Update, context: ContextTypes.DEFAULT_TYPE):
         cur.execute("SELECT daily_count FROM users WHERE user_id=?", (uid,))
         daily_count = cur.fetchone()[0]
         if daily_count >= DAILY_LIMIT:
-            await query.message.reply_text("❌ Daily limit reached.")
+            await query.edit_message_text("❌ Daily limit reached. Come back tomorrow!", reply_markup=main_menu())
             return
-        await query.message.reply_text("🎯 Select difficulty", reply_markup=difficulty_menu(query.data))
+        await query.edit_message_text("🎯 Select Game Difficulty:", reply_markup=difficulty_menu(query.data))
 
     elif "_" in query.data and not query.data.startswith("withdraw_"):
         mode, level = query.data.split("_")
         question, answer = math_question(level) if mode == "math" else random.choice(LOGIC_QUESTIONS)
         pending[uid] = {"answer": answer.lower(), "time": time.time(), "level": level}
-        await query.message.reply_text(f"⏱ {TIME_LIMIT[level]} seconds\n\n❓ {question}")
+        await query.message.reply_text(f"⏱ You have {TIME_LIMIT[level]} seconds!\n\n❓ <b>{question}</b>", parse_mode="HTML")
 
     elif query.data == "balance":
         cur.execute("SELECT balance FROM users WHERE user_id=?", (uid,))
         balance = cur.fetchone()[0]
-        await query.message.reply_text(f"💰 Balance: ₱{balance}")
+        await query.edit_message_text(f"💰 <b>Your Current Balance:</b> ₱{balance:.2f}", reply_markup=main_menu(), parse_mode="HTML")
+
+    elif query.data == "referrals":
+        ref_link = f"https://t.me/{BOT_USERNAME}?start={uid}"
+        await query.edit_message_text(
+            f"👥 <b>Referral Program</b>\n\nShare your link and earn ₱{REFERRAL_REWARD} for every user!\n\n🔗 <code>{ref_link}</code>",
+            reply_markup=main_menu(),
+            parse_mode="HTML"
+        )
 
     elif query.data == "withdraw":
-        await query.message.reply_text("💸 Choose withdrawal method:", reply_markup=withdrawal_menu())
+        await query.edit_message_text("💸 Choose withdrawal method:", reply_markup=withdrawal_menu())
 
     elif query.data.startswith("withdraw_"):
         method = query.data.split("_")[1]
@@ -205,16 +207,13 @@ async def buttons(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await query.message.reply_text("❌ Insufficient balance.")
             return
         
-        cur.execute(
-            "UPDATE users SET balance=balance-? WHERE user_id=?",
-            (total, uid)
-        )
+        cur.execute("UPDATE users SET balance=balance-? WHERE user_id=?", (total, uid))
         db.commit()
         number = GCASH_NUMBER if data["withdraw_method"] == "gcash" else PAYMAYA_NUMBER
-        await query.message.reply_text(f"✅ Send ₱{amount} + ₱{WITHDRAW_FEE} to {number}")
+        await query.message.reply_text(f"✅ Withdrawal Requested!\nSend ₱{amount} + ₱{WITHDRAW_FEE} fee to {number}")
 
     elif query.data == "back":
-        await query.message.reply_text("🏠 Main Menu", reply_markup=main_menu())
+        await query.edit_message_text("🏠 Main Menu", reply_markup=main_menu())
 
 # ================== MESSAGE HANDLER ==================
 async def text_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -233,14 +232,14 @@ async def text_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 (reward, reward, uid)
             )
             db.commit()
-            await update.message.reply_text(f"✅ Correct! +₱{reward}")
+            await update.message.reply_text(f"✅ Correct! +₱{reward}", reply_markup=main_menu())
         else:
-            await update.message.reply_text("❌ Wrong answer")
+            await update.message.reply_text("❌ Wrong answer!", reply_markup=main_menu())
         return
 
     if uid in pending and pending[uid].get("step") == "amount":
         try:
-            amt = int(txt)
+            amt = float(txt)
         except:
             await update.message.reply_text("❌ Invalid amount.")
             return
@@ -263,7 +262,6 @@ class SimpleHandler(BaseHTTPRequestHandler):
 def run_dummy_server():
     port = int(os.environ.get("PORT", 8080))
     server = HTTPServer(('0.0.0.0', port), SimpleHandler)
-    print(f"Health check server listening on port {port}")
     server.serve_forever()
 
 # ================== MAIN STARTUP ==================
@@ -271,14 +269,12 @@ if __name__ == "__main__":
     if not BOT_TOKEN:
         raise RuntimeError("BOT_TOKEN is missing")
     
-    # Start the Health Check server in a background thread
     threading.Thread(target=run_dummy_server, daemon=True).start()
 
-    # Build and start the bot
     application = ApplicationBuilder().token(BOT_TOKEN).build()
     application.add_handler(CommandHandler("start", start))
     application.add_handler(CallbackQueryHandler(buttons))
     application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, text_handler))
 
-    print("Think2EarnBot is starting...")
+    print("LOGO88 Bot is starting...")
     application.run_polling()
