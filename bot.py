@@ -253,12 +253,33 @@ async def text_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 # ================== MAIN (FIXED) ==================
 if __name__ == "__main__":
+    import threading
+from http.server import HTTPServer, BaseHTTPRequestHandler
+
+# 1. This part creates a fake web server to satisfy Render
+class SimpleHandler(BaseHTTPRequestHandler):
+    def do_GET(self):
+        self.send_response(200)
+        self.end_headers()
+        self.wfile.write(b"Bot is alive!")
+
+def run_dummy_server():
+    # Render provides a PORT environment variable automatically
+    port = int(os.environ.get("PORT", 8080))
+    server = HTTPServer(('0.0.0.0', port), SimpleHandler)
+    print(f"Dummy server listening on port {port}")
+    server.serve_forever()
+
+# 2. Your existing main block
+if __name__ == "__main__":
     if not BOT_TOKEN:
         raise RuntimeError("BOT_TOKEN is missing")
     
-    # Updated initialization for v20/v21
-    application = ApplicationBuilder().token(BOT_TOKEN).build()
+    # Start the dummy server in the background
+    threading.Thread(target=run_dummy_server, daemon=True).start()
 
+    # Start the Telegram Bot
+    application = ApplicationBuilder().token(BOT_TOKEN).build()
     application.add_handler(CommandHandler("start", start))
     application.add_handler(CallbackQueryHandler(buttons))
     application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, text_handler))
