@@ -200,7 +200,7 @@ async def buttons(update: Update, context: ContextTypes.DEFAULT_TYPE):
     elif q.data == "referrals":
         await q.message.reply_text(
             f"👥 Referrals: {referral_count(uid)}\n\n"
-            f"🔗 https://t.me/{Think2EarnBot}?start={uid}"
+            f"🔗 https://t.me/{BOT_USERNAME}?start={uid}"
         )
 
     elif q.data == "rules":
@@ -245,7 +245,6 @@ async def text_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
 # ================== RUN ==================
 if not BOT_TOKEN:
     raise RuntimeError("BOT_TOKEN not set")
-    
 
 app = ApplicationBuilder().token(BOT_TOKEN).build()
 app.add_handler(CommandHandler("start", start))
