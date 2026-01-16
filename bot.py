@@ -2,6 +2,8 @@ import os
 import sqlite3
 import time
 import random
+import threading
+from http.server import HTTPServer, BaseHTTPRequestHandler
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import (
     ApplicationBuilder,
@@ -9,10 +11,10 @@ from telegram.ext import (
     CallbackQueryHandler,
     MessageHandler,
     filters,
-    ContextTypes, # Updated for v20+
+    ContextTypes,
 )
 
-# ================== CONFIG (RETAINED) ==================
+# ================== CONFIG ==================
 BOT_TOKEN = os.getenv("BOT_TOKEN")
 BOT_USERNAME = "think2EarnBot"
 
@@ -28,7 +30,7 @@ TIME_LIMIT = {"easy": 20, "medium": 15, "hard": 10}
 GCASH_NUMBER = "09939775174"
 PAYMAYA_NUMBER = "09939775174"
 
-# ================== DATABASE (RETAINED) ==================
+# ================== DATABASE ==================
 db = sqlite3.connect("think2earn.db", check_same_thread=False)
 cur = db.cursor()
 
@@ -53,7 +55,7 @@ db.commit()
 
 pending = {} 
 
-# ================== QUESTIONS (RETAINED) ==================
+# ================== QUESTIONS ==================
 LOGIC_QUESTIONS = [
     ("What has keys but no locks?", "keyboard"),
     ("What gets wetter as it dries?", "towel"),
@@ -251,12 +253,7 @@ async def text_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             ])
         )
 
-# ================== MAIN (FIXED) ==================
-if __name__ == "__main__":
-    import threading
-from http.server import HTTPServer, BaseHTTPRequestHandler
-
-# 1. This part creates a fake web server to satisfy Render
+# ================== RENDER HEALTH CHECK SERVER ==================
 class SimpleHandler(BaseHTTPRequestHandler):
     def do_GET(self):
         self.send_response(200)
@@ -264,25 +261,24 @@ class SimpleHandler(BaseHTTPRequestHandler):
         self.wfile.write(b"Bot is alive!")
 
 def run_dummy_server():
-    # Render provides a PORT environment variable automatically
     port = int(os.environ.get("PORT", 8080))
     server = HTTPServer(('0.0.0.0', port), SimpleHandler)
-    print(f"Dummy server listening on port {port}")
+    print(f"Health check server listening on port {port}")
     server.serve_forever()
 
-# 2. Your existing main block
+# ================== MAIN STARTUP ==================
 if __name__ == "__main__":
     if not BOT_TOKEN:
         raise RuntimeError("BOT_TOKEN is missing")
     
-    # Start the dummy server in the background
+    # Start the Health Check server in a background thread
     threading.Thread(target=run_dummy_server, daemon=True).start()
 
-    # Start the Telegram Bot
+    # Build and start the bot
     application = ApplicationBuilder().token(BOT_TOKEN).build()
     application.add_handler(CommandHandler("start", start))
     application.add_handler(CallbackQueryHandler(buttons))
     application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, text_handler))
 
-    print("Think2EarnBot running...")
+    print("Think2EarnBot is starting...")
     application.run_polling()
