@@ -5,12 +5,12 @@ import random
 
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import (
-    ApplicationBuilder,
+    Updater,
     CommandHandler,
     CallbackQueryHandler,
     MessageHandler,
-    ContextTypes,
-    filters,
+    Filters,
+    CallbackContext,
 )
 
 # ================== CONFIG ==================
@@ -103,7 +103,7 @@ def reset_daily(uid):
     if row and row[0] != today():
         cur.execute(
             "UPDATE users SET daily_count=0, last_day=? WHERE user_id=?",
-            (today(), uid),
+            (today(), uid)
         )
         db.commit()
 
@@ -114,7 +114,7 @@ def referral_count(uid):
 def leaderboard_top(limit=10):
     cur.execute(
         "SELECT user_id, all_time_balance FROM users ORDER BY all_time_balance DESC LIMIT ?",
-        (limit,),
+        (limit,)
     )
     return cur.fetchall()
 
@@ -141,12 +141,12 @@ def difficulty_menu(mode):
 def withdrawal_menu():
     return InlineKeyboardMarkup([
         [InlineKeyboardButton("GCash", callback_data="withdraw_gcash")],
-        [InlineKeyboardButton("Paymaya", callback_data="withdraw_paymaya")],
+        [InlineKeyboardButton("PayMaya", callback_data="withdraw_paymaya")],
         [InlineKeyboardButton("⬅ Back", callback_data="back")]
     ])
 
 # ================== COMMANDS ==================
-async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
+def start(update: Update, context: CallbackContext):
     uid = update.effective_user.id
     ensure_user(uid)
     reset_daily(uid)
@@ -159,149 +159,120 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 if not cur.fetchone():
                     cur.execute("INSERT INTO referrals VALUES (?,?)", (ref, uid))
                     cur.execute(
-                        "UPDATE users SET balance = balance + ?, all_time_balance = all_time_balance + ? WHERE user_id=?",
-                        (REFERRAL_REWARD, REFERRAL_REWARD, ref),
+                        "UPDATE users SET balance=balance+?, all_time_balance=all_time_balance+? WHERE user_id=?",
+                        (REFERRAL_REWARD, REFERRAL_REWARD, ref)
                     )
                     db.commit()
-        except Exception:
+        except:
             pass
 
-    await update.message.reply_text(
-        "🧠 Think2Earn Bot\nAnswer questions • Earn points\n\n"
-        f"🎯 Daily limit: {DAILY_LIMIT}",
-        reply_markup=main_menu(),
+    update.message.reply_text(
+        "🧠 Think2Earn Bot\nAnswer questions • Earn points",
+        reply_markup=main_menu()
     )
 
 # ================== BUTTON HANDLER ==================
-async def buttons(update: Update, context: ContextTypes.DEFAULT_TYPE):
+def buttons(update: Update, context: CallbackContext):
     q = update.callback_query
     uid = q.from_user.id
-    await q.answer()
+    q.answer()
     reset_daily(uid)
 
     if q.data in ["math", "logic"]:
         cur.execute("SELECT daily_count FROM users WHERE user_id=?", (uid,))
         if cur.fetchone()[0] >= DAILY_LIMIT:
-            await q.message.reply_text("❌ Daily limit reached.")
+            q.message.reply_text("❌ Daily limit reached.")
             return
-        await q.message.reply_text("🎯 Select difficulty", reply_markup=difficulty_menu(q.data))
-        return
+        q.message.reply_text("🎯 Select difficulty", reply_markup=difficulty_menu(q.data))
 
-    if "_" in q.data:
+    elif "_" in q.data:
         mode, level = q.data.split("_")
-        question, answer = (
-            math_question(level)
-            if mode == "math"
-            else random.choice(LOGIC_QUESTIONS)
-        )
+        question, answer = math_question(level) if mode == "math" else random.choice(LOGIC_QUESTIONS)
         pending[uid] = {"answer": answer.lower(), "time": time.time(), "level": level}
-        await q.message.reply_text(f"⏱ {TIME_LIMIT[level]} seconds\n\n❓ {question}")
-        return
+        q.message.reply_text(f"⏱ {TIME_LIMIT[level]} seconds\n\n❓ {question}")
 
-    if q.data == "balance":
+    elif q.data == "balance":
         cur.execute("SELECT balance FROM users WHERE user_id=?", (uid,))
-        await q.message.reply_text(f"💰 Balance: ₱{cur.fetchone()[0]}")
-        return
+        q.message.reply_text(f"💰 Balance: ₱{cur.fetchone()[0]}")
 
-    if q.data == "referrals":
-        await q.message.reply_text(
-            f"👥 Referrals: {referral_count(uid)}\n"
-            f"🔗 https://t.me/{BOT_USERNAME}?start={uid}"
-        )
-        return
+    elif q.data == "withdraw":
+        q.message.reply_text("💸 Choose withdrawal method:", reply_markup=withdrawal_menu())
 
-    if q.data == "rules":
-        await q.message.reply_text("📜 Rules:\n• One account per user\n• No cheating\n• Daily limits apply")
-        return
+    elif q.data.startswith("withdraw_"):
+        method = q.data.split("_")[1]
+        pending[uid] = {"withdraw_method": method, "step": "amount"}
+        q.message.reply_text(f"Enter amount to withdraw via {method.upper()}:")
 
-    if q.data == "leaderboard":
-        top = leaderboard_top()
-        msg = "🏆 Top Players:\n"
-        for i, (u, bal) in enumerate(top, 1):
-            msg += f"{i}. {u} - ₱{bal}\n"
-        await q.message.reply_text(msg)
-        return
-
-    if q.data == "withdraw":
-        await q.message.reply_text("💸 Choose a withdrawal method:", reply_markup=withdrawal_menu())
-        return
-
-    if q.data.startswith("withdraw_"):
-        pending[uid] = {"withdraw_method": q.data.split("_")[1], "step": "amount"}
-        await q.message.reply_text("💰 Enter amount to withdraw:")
-        return
-
-    if q.data == "confirm_withdraw":
+    elif q.data == "confirm_withdraw":
         data = pending.pop(uid, None)
         if not data:
-            await q.message.reply_text("❌ No pending withdrawal.")
+            q.message.reply_text("❌ No pending withdrawal.")
             return
         amount = data["amount"]
-        cur.execute("SELECT balance FROM users WHERE user_id=?", (uid,))
-        bal = cur.fetchone()[0]
         total = amount + WITHDRAW_FEE
-        if bal < total:
-            await q.message.reply_text("❌ Insufficient balance.")
+        cur.execute("SELECT balance FROM users WHERE user_id=?", (uid,))
+        if cur.fetchone()[0] < total:
+            q.message.reply_text("❌ Insufficient balance.")
             return
         cur.execute(
-            "UPDATE users SET balance = balance - ?, all_time_balance = all_time_balance - ? WHERE user_id=?",
-            (total, total, uid),
+            "UPDATE users SET balance=balance-?, all_time_balance=all_time_balance-? WHERE user_id=?",
+            (total, total, uid)
         )
         db.commit()
-        await q.message.reply_text("✅ Withdrawal confirmed.")
-        return
+        number = GCASH_NUMBER if data["withdraw_method"] == "gcash" else PAYMAYA_NUMBER
+        q.message.reply_text(f"✅ Send ₱{amount} + ₱{WITHDRAW_FEE} to {number}")
 
-    if q.data == "back":
-        await q.message.reply_text("🏠 Main Menu", reply_markup=main_menu())
+    elif q.data == "back":
+        q.message.reply_text("🏠 Main Menu", reply_markup=main_menu())
 
 # ================== MESSAGE HANDLER ==================
-async def text_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+def text_handler(update: Update, context: CallbackContext):
     uid = update.effective_user.id
     txt = update.message.text.lower()
 
     if uid in pending and "answer" in pending[uid]:
         data = pending.pop(uid)
         if time.time() - data["time"] > TIME_LIMIT[data["level"]]:
-            await update.message.reply_text("⏰ Time’s up!")
+            update.message.reply_text("⏰ Time’s up!")
             return
         if txt == data["answer"]:
             reward = REWARDS[data["level"]]
             cur.execute(
-                "UPDATE users SET balance = balance + ?, all_time_balance = all_time_balance + ?, daily_count = daily_count + 1 WHERE user_id=?",
-                (reward, reward, uid),
+                "UPDATE users SET balance=balance+?, all_time_balance=all_time_balance+?, daily_count=daily_count+1 WHERE user_id=?",
+                (reward, reward, uid)
             )
             db.commit()
-            await update.message.reply_text(f"✅ Correct! +₱{reward}")
+            update.message.reply_text(f"✅ Correct! +₱{reward}")
         else:
-            await update.message.reply_text("❌ Wrong answer")
-        return
+            update.message.reply_text("❌ Wrong answer")
 
-    if uid in pending and pending[uid].get("step") == "amount":
+    elif uid in pending and pending[uid].get("step") == "amount":
         try:
             amt = int(txt)
-        except ValueError:
-            await update.message.reply_text("❌ Invalid amount.")
+        except:
+            update.message.reply_text("❌ Invalid amount.")
             return
         pending[uid]["amount"] = amt
-        pending[uid]["step"] = "confirm"
-        await update.message.reply_text(
-            f"💸 Confirm ₱{amt} + ₱{WITHDRAW_FEE} fee?",
+        update.message.reply_text(
+            f"Confirm ₱{amt} + ₱{WITHDRAW_FEE} fee?",
             reply_markup=InlineKeyboardMarkup([
                 [InlineKeyboardButton("✅ Confirm", callback_data="confirm_withdraw")],
                 [InlineKeyboardButton("⬅ Back", callback_data="back")]
-            ]),
+            ])
         )
 
 # ================== RUN ==================
 if __name__ == "__main__":
     if not BOT_TOKEN:
-        raise RuntimeError("BOT_TOKEN is missing")
+        raise RuntimeError("BOT_TOKEN missing")
 
-    app = ApplicationBuilder().token(BOT_TOKEN).build()
+    updater = Updater(BOT_TOKEN, use_context=True)
+    dp = updater.dispatcher
 
-    app.add_handler(CommandHandler("start", start))
-    app.add_handler(CallbackQueryHandler(buttons))
-    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, text_handler))
+    dp.add_handler(CommandHandler("start", start))
+    dp.add_handler(CallbackQueryHandler(buttons))
+    dp.add_handler(MessageHandler(Filters.text & ~Filters.command, text_handler))
 
     print("Think2EarnBot running...")
-    app.run_polling(close_loop=False)
+    updater.start_polling()
+    updater.idle()
