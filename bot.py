@@ -8,8 +8,8 @@ from telegram.ext import (
     CommandHandler,
     CallbackQueryHandler,
     MessageHandler,
-    ContextTypes,
     filters,
+    CallbackContext,
 )
 
 # ================== CONFIG ==================
@@ -32,6 +32,7 @@ PAYMAYA_NUMBER = "09939775174"
 db = sqlite3.connect("think2earn.db", check_same_thread=False)
 cur = db.cursor()
 
+# Create tables if not exist
 cur.execute("""
 CREATE TABLE IF NOT EXISTS users (
     user_id INTEGER PRIMARY KEY,
@@ -52,7 +53,7 @@ CREATE TABLE IF NOT EXISTS referrals (
 
 db.commit()
 
-pending = {}
+pending = {}  # Store pending questions/withdrawals
 
 # ================== QUESTIONS ==================
 LOGIC_QUESTIONS = [
@@ -82,11 +83,12 @@ def math_question(level):
     if level == "easy":
         a, b = random.randint(1, 10), random.randint(1, 10)
         return f"{a} + {b} = ?", str(a + b)
-    if level == "medium":
+    elif level == "medium":
         a, b = random.randint(10, 50), random.randint(5, 30)
         return f"{a} - {b} = ?", str(a - b)
-    a, b = random.randint(5, 20), random.randint(5, 15)
-    return f"{a} × {b} = ?", str(a * b)
+    else:  # hard or default
+        a, b = random.randint(5, 20), random.randint(5, 15)
+        return f"{a} × {b} = ?", str(a * b)
 
 # ================== HELPERS ==================
 def today():
@@ -145,11 +147,12 @@ def withdrawal_menu():
     ])
 
 # ================== COMMANDS ==================
-def start(update: Update, context: CallbackContext):
+async def start(update: Update, context: CallbackContext):
     uid = update.effective_user.id
     ensure_user(uid)
     reset_daily(uid)
 
+    # Handle referral if provided
     if context.args:
         try:
             ref = int(context.args[0])
@@ -165,74 +168,80 @@ def start(update: Update, context: CallbackContext):
         except:
             pass
 
-    update.message.reply_text(
+    await update.message.reply_text(
         "🧠 Think2Earn Bot\nAnswer questions • Earn points",
         reply_markup=main_menu()
     )
 
 # ================== BUTTON HANDLER ==================
-def buttons(update: Update, context: CallbackContext):
-    q = update.callback_query
-    uid = q.from_user.id
-    q.answer()
+async def buttons(update: Update, context: CallbackContext):
+    query = update.callback_query
+    await query.answer()
+    uid = query.from_user.id
     reset_daily(uid)
 
-    if q.data in ["math", "logic"]:
+    if query.data == "math" or query.data == "logic":
+        # Check daily limit
         cur.execute("SELECT daily_count FROM users WHERE user_id=?", (uid,))
-        if cur.fetchone()[0] >= DAILY_LIMIT:
-            q.message.reply_text("❌ Daily limit reached.")
+        daily_count = cur.fetchone()[0]
+        if daily_count >= DAILY_LIMIT:
+            await query.message.reply_text("❌ Daily limit reached.")
             return
-        q.message.reply_text("🎯 Select difficulty", reply_markup=difficulty_menu(q.data))
+        await query.message.reply_text("🎯 Select difficulty", reply_markup=difficulty_menu(query.data))
 
-    elif "_" in q.data:
-        mode, level = q.data.split("_")
+    elif "_" in query.data:
+        mode, level = query.data.split("_")
         question, answer = math_question(level) if mode == "math" else random.choice(LOGIC_QUESTIONS)
         pending[uid] = {"answer": answer.lower(), "time": time.time(), "level": level}
-        q.message.reply_text(f"⏱ {TIME_LIMIT[level]} seconds\n\n❓ {question}")
+        await query.message.reply_text(f"⏱ {TIME_LIMIT[level]} seconds\n\n❓ {question}")
 
-    elif q.data == "balance":
+    elif query.data == "balance":
         cur.execute("SELECT balance FROM users WHERE user_id=?", (uid,))
-        q.message.reply_text(f"💰 Balance: ₱{cur.fetchone()[0]}")
+        balance = cur.fetchone()[0]
+        await query.message.reply_text(f"💰 Balance: ₱{balance}")
 
-    elif q.data == "withdraw":
-        q.message.reply_text("💸 Choose withdrawal method:", reply_markup=withdrawal_menu())
+    elif query.data == "withdraw":
+        await query.message.reply_text("💸 Choose withdrawal method:", reply_markup=withdrawal_menu())
 
-    elif q.data.startswith("withdraw_"):
-        method = q.data.split("_")[1]
+    elif query.data.startswith("withdraw_"):
+        method = query.data.split("_")[1]
         pending[uid] = {"withdraw_method": method, "step": "amount"}
-        q.message.reply_text(f"Enter amount to withdraw via {method.upper()}:")
+        await query.message.reply_text(f"Enter amount to withdraw via {method.upper()}:")
 
-    elif q.data == "confirm_withdraw":
+    elif query.data == "confirm_withdraw":
         data = pending.pop(uid, None)
         if not data:
-            q.message.reply_text("❌ No pending withdrawal.")
+            await query.message.reply_text("❌ No pending withdrawal.")
             return
         amount = data["amount"]
         total = amount + WITHDRAW_FEE
         cur.execute("SELECT balance FROM users WHERE user_id=?", (uid,))
-        if cur.fetchone()[0] < total:
-            q.message.reply_text("❌ Insufficient balance.")
+        current_balance = cur.fetchone()[0]
+        if current_balance < total:
+            await query.message.reply_text("❌ Insufficient balance.")
             return
+        # Deduct balance
         cur.execute(
             "UPDATE users SET balance=balance-?, all_time_balance=all_time_balance-? WHERE user_id=?",
             (total, total, uid)
         )
         db.commit()
         number = GCASH_NUMBER if data["withdraw_method"] == "gcash" else PAYMAYA_NUMBER
-        q.message.reply_text(f"✅ Send ₱{amount} + ₱{WITHDRAW_FEE} to {number}")
+        await query.message.reply_text(f"✅ Send ₱{amount} + ₱{WITHDRAW_FEE} to {number}")
 
-    elif q.data == "back":
-        q.message.reply_text("🏠 Main Menu", reply_markup=main_menu())
+    elif query.data == "back":
+        await query.message.reply_text("🏠 Main Menu", reply_markup=main_menu())
 
 # ================== MESSAGE HANDLER ==================
-def text_handler(update: Update, context: CallbackContext):
+async def text_handler(update: Update, context: CallbackContext):
     uid = update.effective_user.id
     txt = update.message.text.lower()
 
+    # Check if user is answering a question
     if uid in pending and "answer" in pending[uid]:
         data = pending.pop(uid)
         if time.time() - data["time"] > TIME_LIMIT[data["level"]]:
-            update.message.reply_text("⏰ Time’s up!")
+            await update.message.reply_text("⏰ Time’s up!")
             return
         if txt == data["answer"]:
             reward = REWARDS[data["level"]]
@@ -241,18 +250,20 @@ def text_handler(update: Update, context: CallbackContext):
                 (reward, reward, uid)
             )
             db.commit()
-            update.message.reply_text(f"✅ Correct! +₱{reward}")
+            await update.message.reply_text(f"✅ Correct! +₱{reward}")
         else:
-            update.message.reply_text("❌ Wrong answer")
+            await update.message.reply_text("❌ Wrong answer")
+        return
 
-    elif uid in pending and pending[uid].get("step") == "amount":
+    # Handle withdrawal amount input
+    if uid in pending and pending[uid].get("step") == "amount":
         try:
             amt = int(txt)
         except:
-            update.message.reply_text("❌ Invalid amount.")
+            await update.message.reply_text("❌ Invalid amount.")
             return
         pending[uid]["amount"] = amt
-        update.message.reply_text(
+        await update.message.reply_text(
             f"Confirm ₱{amt} + ₱{WITHDRAW_FEE} fee?",
             reply_markup=InlineKeyboardMarkup([
                 [InlineKeyboardButton("✅ Confirm", callback_data="confirm_withdraw")],
@@ -260,17 +271,17 @@ def text_handler(update: Update, context: CallbackContext):
             ])
         )
 
-# ================== RUN ==================
+# ================== MAIN ==================
 if __name__ == "__main__":
     if not BOT_TOKEN:
         raise RuntimeError("BOT_TOKEN is missing")
+    # Initialize application
+    application = ApplicationBuilder().token(BOT_TOKEN).build()
 
-    app = ApplicationBuilder().token(BOT_TOKEN).build()
-
-    app.add_handler(CommandHandler("start", start))
-    app.add_handler(CallbackQueryHandler(buttons))
-    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, text_handler))
+    # Register handlers
+    application.add_handler(CommandHandler("start", start))
+    application.add_handler(CallbackQueryHandler(buttons))
+    application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, text_handler))
 
     print("Think2EarnBot running...")
-    app.run_polling(close_loop=False)
-    
+    application.run_polling()
