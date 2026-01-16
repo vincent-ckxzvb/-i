@@ -9,10 +9,10 @@ from telegram.ext import (
     CallbackQueryHandler,
     MessageHandler,
     filters,
-    CallbackContext,
+    ContextTypes, # Updated for v20+
 )
 
-# ================== CONFIG ==================
+# ================== CONFIG (RETAINED) ==================
 BOT_TOKEN = os.getenv("BOT_TOKEN")
 BOT_USERNAME = "think2EarnBot"
 
@@ -28,11 +28,10 @@ TIME_LIMIT = {"easy": 20, "medium": 15, "hard": 10}
 GCASH_NUMBER = "09939775174"
 PAYMAYA_NUMBER = "09939775174"
 
-# ================== DATABASE ==================
+# ================== DATABASE (RETAINED) ==================
 db = sqlite3.connect("think2earn.db", check_same_thread=False)
 cur = db.cursor()
 
-# Create tables if not exist
 cur.execute("""
 CREATE TABLE IF NOT EXISTS users (
     user_id INTEGER PRIMARY KEY,
@@ -50,12 +49,11 @@ CREATE TABLE IF NOT EXISTS referrals (
     referred INTEGER UNIQUE
 )
 """)
-
 db.commit()
 
-pending = {}  # Store pending questions/withdrawals
+pending = {} 
 
-# ================== QUESTIONS ==================
+# ================== QUESTIONS (RETAINED) ==================
 LOGIC_QUESTIONS = [
     ("What has keys but no locks?", "keyboard"),
     ("What gets wetter as it dries?", "towel"),
@@ -86,7 +84,7 @@ def math_question(level):
     elif level == "medium":
         a, b = random.randint(10, 50), random.randint(5, 30)
         return f"{a} - {b} = ?", str(a - b)
-    else:  # hard or default
+    else: 
         a, b = random.randint(5, 20), random.randint(5, 15)
         return f"{a} × {b} = ?", str(a * b)
 
@@ -102,22 +100,8 @@ def reset_daily(uid):
     cur.execute("SELECT last_day FROM users WHERE user_id=?", (uid,))
     row = cur.fetchone()
     if row and row[0] != today():
-        cur.execute(
-            "UPDATE users SET daily_count=0, last_day=? WHERE user_id=?",
-            (today(), uid)
-        )
+        cur.execute("UPDATE users SET daily_count=0, last_day=? WHERE user_id=?", (today(), uid))
         db.commit()
-
-def referral_count(uid):
-    cur.execute("SELECT COUNT(*) FROM referrals WHERE referrer=?", (uid,))
-    return cur.fetchone()[0]
-
-def leaderboard_top(limit=10):
-    cur.execute(
-        "SELECT user_id, all_time_balance FROM users ORDER BY all_time_balance DESC LIMIT ?",
-        (limit,)
-    )
-    return cur.fetchall()
 
 # ================== UI ==================
 def main_menu():
@@ -147,12 +131,11 @@ def withdrawal_menu():
     ])
 
 # ================== COMMANDS ==================
-async def start(update: Update, context: CallbackContext):
+async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     uid = update.effective_user.id
     ensure_user(uid)
     reset_daily(uid)
 
-    # Handle referral if provided
     if context.args:
         try:
             ref = int(context.args[0])
@@ -174,14 +157,13 @@ async def start(update: Update, context: CallbackContext):
     )
 
 # ================== BUTTON HANDLER ==================
-async def buttons(update: Update, context: CallbackContext):
+async def buttons(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
     uid = query.from_user.id
     reset_daily(uid)
 
-    if query.data == "math" or query.data == "logic":
-        # Check daily limit
+    if query.data in ["math", "logic"]:
         cur.execute("SELECT daily_count FROM users WHERE user_id=?", (uid,))
         daily_count = cur.fetchone()[0]
         if daily_count >= DAILY_LIMIT:
@@ -189,7 +171,7 @@ async def buttons(update: Update, context: CallbackContext):
             return
         await query.message.reply_text("🎯 Select difficulty", reply_markup=difficulty_menu(query.data))
 
-    elif "_" in query.data:
+    elif "_" in query.data and not query.data.startswith("withdraw_"):
         mode, level = query.data.split("_")
         question, answer = math_question(level) if mode == "math" else random.choice(LOGIC_QUESTIONS)
         pending[uid] = {"answer": answer.lower(), "time": time.time(), "level": level}
@@ -220,10 +202,10 @@ async def buttons(update: Update, context: CallbackContext):
         if current_balance < total:
             await query.message.reply_text("❌ Insufficient balance.")
             return
-        # Deduct balance
+        
         cur.execute(
-            "UPDATE users SET balance=balance-?, all_time_balance=all_time_balance-? WHERE user_id=?",
-            (total, total, uid)
+            "UPDATE users SET balance=balance-? WHERE user_id=?",
+            (total, uid)
         )
         db.commit()
         number = GCASH_NUMBER if data["withdraw_method"] == "gcash" else PAYMAYA_NUMBER
@@ -233,11 +215,10 @@ async def buttons(update: Update, context: CallbackContext):
         await query.message.reply_text("🏠 Main Menu", reply_markup=main_menu())
 
 # ================== MESSAGE HANDLER ==================
-async def text_handler(update: Update, context: CallbackContext):
+async def text_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     uid = update.effective_user.id
     txt = update.message.text.lower()
 
-    # Check if user is answering a question
     if uid in pending and "answer" in pending[uid]:
         data = pending.pop(uid)
         if time.time() - data["time"] > TIME_LIMIT[data["level"]]:
@@ -255,7 +236,6 @@ async def text_handler(update: Update, context: CallbackContext):
             await update.message.reply_text("❌ Wrong answer")
         return
 
-    # Handle withdrawal amount input
     if uid in pending and pending[uid].get("step") == "amount":
         try:
             amt = int(txt)
@@ -271,14 +251,14 @@ async def text_handler(update: Update, context: CallbackContext):
             ])
         )
 
-# ================== MAIN ==================
+# ================== MAIN (FIXED) ==================
 if __name__ == "__main__":
     if not BOT_TOKEN:
         raise RuntimeError("BOT_TOKEN is missing")
-    # Initialize application
+    
+    # Updated initialization for v20/v21
     application = ApplicationBuilder().token(BOT_TOKEN).build()
 
-    # Register handlers
     application.add_handler(CommandHandler("start", start))
     application.add_handler(CallbackQueryHandler(buttons))
     application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, text_handler))
