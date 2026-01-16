@@ -2,15 +2,14 @@ import os
 import sqlite3
 import time
 import random
-
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import (
-    Updater,
+    ApplicationBuilder,
     CommandHandler,
     CallbackQueryHandler,
     MessageHandler,
-    Filters,
-    CallbackContext,
+    ContextTypes,
+    filters,
 )
 
 # ================== CONFIG ==================
@@ -264,15 +263,14 @@ def text_handler(update: Update, context: CallbackContext):
 # ================== RUN ==================
 if __name__ == "__main__":
     if not BOT_TOKEN:
-        raise RuntimeError("BOT_TOKEN missing")
+        raise RuntimeError("BOT_TOKEN is missing")
 
-    updater = Updater(BOT_TOKEN, use_context=True)
-    dp = updater.dispatcher
+    app = ApplicationBuilder().token(BOT_TOKEN).build()
 
-    dp.add_handler(CommandHandler("start", start))
-    dp.add_handler(CallbackQueryHandler(buttons))
-    dp.add_handler(MessageHandler(Filters.text & ~Filters.command, text_handler))
+    app.add_handler(CommandHandler("start", start))
+    app.add_handler(CallbackQueryHandler(buttons))
+    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, text_handler))
 
     print("Think2EarnBot running...")
-    updater.start_polling()
-    updater.idle()
+    app.run_polling(close_loop=False)
+    
