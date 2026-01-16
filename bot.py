@@ -244,7 +244,8 @@ async def text_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 # ================== RUN ==================
 if not BOT_TOKEN:
-    raise RuntimeError("8276060557:AAEloclb1WSAuH1q9z037YuB-j4N66HHuzI")
+    raise RuntimeError("BOT_TOKEN not set")
+    
 
 app = ApplicationBuilder().token(BOT_TOKEN).build()
 app.add_handler(CommandHandler("start", start))
