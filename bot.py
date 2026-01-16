@@ -15,14 +15,18 @@ from telegram.ext import (
 # ================== CONFIG ==================
 BOT_TOKEN = os.getenv("BOT_TOKEN")
 BOT_USERNAME = "think2EarnBot"
-ADMIN_ID = 775857744  # REPLACE WITH YOUR REAL ID
 
+ADMIN_ID = 775857744  # optional if needed
 REFERRAL_REWARD = 100
 MIN_WITHDRAW = 1000
 DAILY_LIMIT = 10
+WITHDRAW_FEE = 15
 
 REWARDS = {"easy": 20, "medium": 40, "hard": 70}
 TIME_LIMIT = {"easy": 20, "medium": 15, "hard": 10}
+
+GCASH_NUMBER = "09939775174"
+PAYMAYA_NUMBER = "09939775174"
 
 # ================== DATABASE ==================
 db = sqlite3.connect("think2earn.db", check_same_thread=False)
@@ -32,6 +36,7 @@ cur.execute("""
 CREATE TABLE IF NOT EXISTS users (
     user_id INTEGER PRIMARY KEY,
     balance INTEGER DEFAULT 0,
+    all_time_balance INTEGER DEFAULT 0,
     streak INTEGER DEFAULT 0,
     daily_count INTEGER DEFAULT 0,
     last_day INTEGER DEFAULT 0
@@ -47,7 +52,7 @@ CREATE TABLE IF NOT EXISTS referrals (
 
 db.commit()
 
-pending = {}
+pending = {}  # track question answers and withdrawal states
 
 # ================== QUESTIONS ==================
 LOGIC_QUESTIONS = [
@@ -75,13 +80,13 @@ LOGIC_QUESTIONS = [
 
 def math_question(level):
     if level == "easy":
-        a, b = random.randint(1, 10), random.randint(1, 10)
-        return f"{a} + {b} = ?", str(a + b)
+        a, b = random.randint(1,10), random.randint(1,10)
+        return f"{a} + {b} = ?", str(a+b)
     if level == "medium":
-        a, b = random.randint(10, 50), random.randint(5, 30)
-        return f"{a} - {b} = ?", str(a - b)
-    a, b = random.randint(5, 20), random.randint(5, 15)
-    return f"{a} × {b} = ?", str(a * b)
+        a, b = random.randint(10,50), random.randint(5,30)
+        return f"{a} - {b} = ?", str(a-b)
+    a, b = random.randint(5,20), random.randint(5,15)
+    return f"{a} × {b} = ?", str(a*b)
 
 # ================== HELPERS ==================
 def today():
@@ -95,15 +100,16 @@ def reset_daily(uid):
     cur.execute("SELECT last_day FROM users WHERE user_id=?", (uid,))
     last = cur.fetchone()[0]
     if last != today():
-        cur.execute(
-            "UPDATE users SET daily_count=0, last_day=? WHERE user_id=?",
-            (today(), uid)
-        )
+        cur.execute("UPDATE users SET daily_count=0, last_day=? WHERE user_id=?", (today(), uid))
         db.commit()
 
 def referral_count(uid):
     cur.execute("SELECT COUNT(*) FROM referrals WHERE referrer=?", (uid,))
     return cur.fetchone()[0]
+
+def leaderboard_top(limit=10):
+    cur.execute("SELECT user_id, all_time_balance FROM users ORDER BY all_time_balance DESC LIMIT ?", (limit,))
+    return cur.fetchall()
 
 # ================== UI ==================
 def main_menu():
@@ -112,7 +118,9 @@ def main_menu():
          InlineKeyboardButton("🧠 Logic", callback_data="logic")],
         [InlineKeyboardButton("💰 Balance", callback_data="balance"),
          InlineKeyboardButton("👥 Referrals", callback_data="referrals")],
-        [InlineKeyboardButton("📜 Rules", callback_data="rules")]
+        [InlineKeyboardButton("📜 Rules", callback_data="rules"),
+         InlineKeyboardButton("🏆 Leaderboard", callback_data="leaderboard")],
+        [InlineKeyboardButton("💸 Withdraw", callback_data="withdraw")]
     ])
 
 def difficulty_menu(mode):
@@ -123,13 +131,20 @@ def difficulty_menu(mode):
         [InlineKeyboardButton("⬅ Back", callback_data="back")]
     ])
 
+def withdrawal_menu():
+    return InlineKeyboardMarkup([
+        [InlineKeyboardButton("GCash", callback_data="withdraw_gcash")],
+        [InlineKeyboardButton("Paymaya", callback_data="withdraw_paymaya")],
+        [InlineKeyboardButton("⬅ Back", callback_data="back")]
+    ])
+
 # ================== COMMANDS ==================
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     uid = update.effective_user.id
     ensure_user(uid)
     reset_daily(uid)
 
-    # REFERRAL (SAFE)
+    # Handle referral
     if context.args:
         try:
             ref = int(context.args[0])
@@ -137,20 +152,15 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 cur.execute("SELECT 1 FROM referrals WHERE referred=?", (uid,))
                 if not cur.fetchone():
                     cur.execute("INSERT INTO referrals VALUES (?,?)", (ref, uid))
-                    cur.execute(
-                        "UPDATE users SET balance = balance + ? WHERE user_id=?",
-                        (REFERRAL_REWARD, ref)
-                    )
+                    cur.execute("UPDATE users SET balance = balance + ? WHERE user_id=?", (REFERRAL_REWARD, ref))
+                    cur.execute("UPDATE users SET all_time_balance = all_time_balance + ? WHERE user_id=?", (REFERRAL_REWARD, ref))
                     db.commit()
-        except:
-            pass
+        except: pass
 
     await update.message.reply_text(
-        "🧠 *Think2Earn Bot*\n\n"
-        "Answer questions • Earn points • Invite friends\n\n"
+        "🧠 Think2Earn Bot\nAnswer questions • Earn points • Invite friends\n\n"
         f"🎯 Daily limit: {DAILY_LIMIT}",
-        reply_markup=main_menu(),
-        parse_mode="Markdown"
+        reply_markup=main_menu()
     )
 
 # ================== BUTTON HANDLER ==================
@@ -160,92 +170,108 @@ async def buttons(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await q.answer()
     reset_daily(uid)
 
+    # Question selection
     if q.data in ["math", "logic"]:
         cur.execute("SELECT daily_count FROM users WHERE user_id=?", (uid,))
         if cur.fetchone()[0] >= DAILY_LIMIT:
             await q.message.reply_text("❌ Daily limit reached.")
             return
-        await q.message.reply_text(
-            "🎯 Select difficulty",
-            reply_markup=difficulty_menu(q.data)
-        )
+        await q.message.reply_text("🎯 Select difficulty", reply_markup=difficulty_menu(q.data))
 
     elif "_" in q.data:
         mode, level = q.data.split("_")
-
-        question, answer = (
-            math_question(level)
-            if mode == "math"
-            else random.choice(LOGIC_QUESTIONS)
-        )
-
-        pending[uid] = {
-            "answer": answer.lower(),
-            "time": time.time(),
-            "level": level
-        }
-
-        await q.message.reply_text(
-            f"⏱ {TIME_LIMIT[level]} seconds\n\n❓ {question}"
-        )
+        question, answer = math_question(level) if mode=="math" else random.choice(LOGIC_QUESTIONS)
+        pending[uid] = {"answer": answer.lower(), "time": time.time(), "level": level}
+        await q.message.reply_text(f"⏱ {TIME_LIMIT[level]} seconds\n\n❓ {question}")
 
     elif q.data == "balance":
-        cur.execute("SELECT balance, daily_count FROM users WHERE user_id=?", (uid,))
-        bal, dc = cur.fetchone()
-        await q.message.reply_text(
-            f"💰 Balance: ₱{bal}\n"
-            f"📊 Today: {dc}/{DAILY_LIMIT}"
-        )
+        cur.execute("SELECT balance FROM users WHERE user_id=?", (uid,))
+        bal = cur.fetchone()[0]
+        await q.message.reply_text(f"💰 Balance: ₱{bal}")
 
     elif q.data == "referrals":
         await q.message.reply_text(
-            f"👥 Referrals: {referral_count(uid)}\n\n"
+            f"👥 Referrals: {referral_count(uid)}\n"
             f"🔗 https://t.me/{BOT_USERNAME}?start={uid}"
         )
 
     elif q.data == "rules":
         await q.message.reply_text(
-            "📜 Rules:\n"
-            "• One account per user\n"
-            "• No cheating\n"
-            "• Daily limits apply\n"
-            "• Admin decision is final"
+            "📜 Rules:\n• One account per user\n• No cheating\n• Daily limits apply"
         )
+
+    elif q.data == "leaderboard":
+        top = leaderboard_top()
+        msg = "🏆 Top Players:\n"
+        for i, (uid_, bal) in enumerate(top,1):
+            msg += f"{i}. {uid_} - ₱{bal}\n"
+        await q.message.reply_text(msg)
+
+    elif q.data == "withdraw":
+        await q.message.reply_text("💸 Choose a withdrawal method:", reply_markup=withdrawal_menu())
+
+    elif q.data.startswith("withdraw_"):
+        method = q.data.split("_")[1]
+        pending[uid] = {"withdraw_method": method, "step": "amount"}
+        await q.message.reply_text(f"💰 Enter amount to withdraw via {method.capitalize()}:")
+
+    elif q.data == "confirm_withdraw":
+        data = pending.pop(uid)
+        method = data["withdraw_method"]
+        amount = data["amount"]
+        cur.execute("SELECT balance FROM users WHERE user_id=?", (uid,))
+        bal = cur.fetchone()[0]
+        total = amount + WITHDRAW_FEE
+        if bal < total:
+            await q.message.reply_text("❌ Insufficient balance.")
+            return
+        cur.execute("UPDATE users SET balance = balance - ?, all_time_balance = all_time_balance - ? WHERE user_id=?",
+                    (total, total, uid))
+        db.commit()
+        number = GCASH_NUMBER if method=="gcash" else PAYMAYA_NUMBER
+        await q.message.reply_text(f"✅ Withdrawal confirmed! Send ₱{amount} + ₱{WITHDRAW_FEE} fee to {number}")
 
     elif q.data == "back":
         await q.message.reply_text("🏠 Main Menu", reply_markup=main_menu())
 
-# ================== ANSWERS ==================
+# ================== MESSAGE HANDLER ==================
 async def text_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     uid = update.effective_user.id
     txt = update.message.text.lower()
 
-    if uid not in pending:
+    # Answering questions
+    if uid in pending and "answer" in pending[uid]:
+        data = pending.pop(uid)
+        if time.time() - data["time"] > TIME_LIMIT[data["level"]]:
+            await update.message.reply_text("⏰ Time’s up!")
+            return
+        if txt == data["answer"]:
+            reward = REWARDS[data["level"]]
+            cur.execute("UPDATE users SET balance = balance + ?, all_time_balance = all_time_balance + ?, daily_count = daily_count + 1 WHERE user_id=?",
+                        (reward, reward, uid))
+            db.commit()
+            await update.message.reply_text(f"✅ Correct! +₱{reward}")
+        else:
+            await update.message.reply_text("❌ Wrong answer")
         return
 
-    data = pending.pop(uid)
-
-    if time.time() - data["time"] > TIME_LIMIT[data["level"]]:
-        await update.message.reply_text("⏰ Time’s up!")
+    # Withdrawal amount step
+    if uid in pending and pending[uid].get("step") == "amount":
+        try:
+            amt = int(txt)
+        except:
+            await update.message.reply_text("❌ Invalid amount.")
+            return
+        pending[uid]["amount"] = amt
+        pending[uid]["step"] = "confirm"
+        await update.message.reply_text(
+            f"💸 Confirm sending ₱{amt} + ₱{WITHDRAW_FEE} fee? Click ✅ to confirm",
+            reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("✅", callback_data="confirm_withdraw")],
+                                               [InlineKeyboardButton("⬅ Back", callback_data="back")]])
+        )
         return
-
-    if txt == data["answer"]:
-        reward = REWARDS[data["level"]]
-        cur.execute("""
-        UPDATE users SET
-        balance = balance + ?,
-        daily_count = daily_count + 1
-        WHERE user_id=?
-        """, (reward, uid))
-        db.commit()
-        await update.message.reply_text(f"✅ Correct! +₱{reward}")
-    else:
-        await update.message.reply_text("❌ Wrong answer")
 
 # ================== RUN ==================
-if not BOT_TOKEN:
-    raise RuntimeError("BOT_TOKEN not set")
-
 app = ApplicationBuilder().token(BOT_TOKEN).build()
 app.add_handler(CommandHandler("start", start))
 app.add_handler(CallbackQueryHandler(buttons))
