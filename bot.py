@@ -89,12 +89,14 @@ def admin_approval_keyboard(user_id, amount):
 # ================== HELPERS ==================
 def get_user(uid):
     cur.execute("SELECT balance, streak, last_puzzle_date, puzzles_done_today FROM users WHERE user_id=?", (uid,))
-    return cur.fetchone()
+    res = cur.fetchone()
+    if res:
+        return res
+    return (0, 0, "", 0) # Return default if user not found
 
 def can_do_puzzle(uid):
     today = date.today().isoformat()
     user = get_user(uid)
-    if not user: return True, 0
     
     last_date = user[2]
     done_today = user[3]
@@ -111,7 +113,6 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     uid = update.effective_user.id
     uname = update.effective_user.first_name
     
-    # Check if user is new
     cur.execute("SELECT user_id FROM users WHERE user_id=?", (uid,))
     is_new = cur.fetchone() is None
 
@@ -145,127 +146,111 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     uid = update.effective_user.id
     text = update.message.text
 
+    # Clear pending state if a menu button is pressed
     menu_options = ["🧮 Math", "🧠 Logic", "💰 Balance", "👥 Referrals", "📜 Rules", "💸 Withdraw", "🏆 Leaderboard"]
     
     if text in menu_options or text == "❌ Cancel":
         if uid in pending: pending.pop(uid)
+        
         if text == "❌ Cancel":
             await update.message.reply_text("Process cancelled.", reply_markup=main_menu_keyboard())
             return
-
-    # Puzzle Logic
-    if text == "🧠 Logic":
-        allowed, count = can_do_puzzle(uid)
-        if not allowed:
-            await update.message.reply_text("⏳ <b>Daily Limit Reached!</b>\nYou've done 5/5 puzzles. Come back tomorrow!", parse_mode="HTML")
+        
+        # Handle Menu Buttons Immediately
+        if text == "🧠 Logic":
+            allowed, count = can_do_puzzle(uid)
+            if not allowed:
+                await update.message.reply_text("⏳ <b>Daily Limit Reached!</b>\nYou've done 5/5 puzzles. Come back tomorrow!", parse_mode="HTML")
+                return
+            q, a = random.choice(LOGIC_QUESTIONS)
+            pending[uid] = {"answer": a.lower(), "level": "logic"}
+            await update.message.reply_text(f"<b>Riddle:</b>\n{q}", reply_markup=cancel_keyboard(), parse_mode="HTML")
             return
-        q, a = random.choice(LOGIC_QUESTIONS)
-        pending[uid] = {"answer": a.lower(), "level": "logic"}
-        await update.message.reply_text(f"<b>Riddle:</b>\n{q}", reply_markup=cancel_keyboard(), parse_mode="HTML")
-        return
 
-    elif text == "🧮 Math":
-        allowed, _ = can_do_puzzle(uid)
-        if not allowed:
-            await update.message.reply_text("⏳ <b>Daily Limit Reached!</b>", parse_mode="HTML")
+        elif text == "🧮 Math":
+            allowed, _ = can_do_puzzle(uid)
+            if not allowed:
+                await update.message.reply_text("⏳ <b>Daily Limit Reached!</b>", parse_mode="HTML")
+                return
+            keyboard = [[
+                InlineKeyboardButton("Easy ₱20", callback_data="math_easy"),
+                InlineKeyboardButton("Med ₱40", callback_data="math_medium"),
+                InlineKeyboardButton("Hard ₱88", callback_data="math_hard")
+            ]]
+            await update.message.reply_text("Select Difficulty:", reply_markup=InlineKeyboardMarkup(keyboard))
             return
-        keyboard = [[
-            InlineKeyboardButton("Easy ₱20", callback_data="math_easy"),
-            InlineKeyboardButton("Med ₱40", callback_data="math_medium"),
-            InlineKeyboardButton("Hard ₱88", callback_data="math_hard")
-        ]]
-        await update.message.reply_text("Select Difficulty:", reply_markup=InlineKeyboardMarkup(keyboard))
-        return
 
-    elif text == "💰 Balance":
-        user = get_user(uid)
-        await update.message.reply_text(f"💳 <b>Wallet Balance:</b> ₱{user[0]:.2f}\n🔥 <b>Current Streak:</b> {user[1]}", parse_mode="HTML")
-        return
+        elif text == "💰 Balance":
+            user = get_user(uid)
+            await update.message.reply_text(f"💳 <b>Wallet Balance:</b> ₱{user[0]:.2f}\n🔥 <b>Current Streak:</b> {user[1]}", parse_mode="HTML")
+            return
 
-    elif text == "👥 Referrals":
-        link = f"https://t.me/{BOT_USERNAME}?start={uid}"
-        cur.execute("SELECT COUNT(*) FROM referrals WHERE referrer=?", (uid,))
-        total_refs = cur.fetchone()[0]
-        ad_msg = (
-            f"🚀 <b>Join Think2Earn!</b>\nSolve puzzles and earn ₱1,000+ GCash easily. "
-            f"Use my link to get a bonus!\n👉 {link}"
-        )
-        await update.message.reply_text(
-            f"👥 <b>Your Referral Link:</b>\n<code>{link}</code>\n\n"
-            f"🎁 Earn ₱{REFERRAL_REWARD} per friend!\n"
-            f"📈 Total Referrals: {total_refs}\n\n"
-            f"📢 <b>Advertising Message (Copy this):</b>\n<pre>{ad_msg}</pre>", 
-            parse_mode="HTML"
-        )
-        return
+        elif text == "👥 Referrals":
+            link = f"https://t.me/{BOT_USERNAME}?start={uid}"
+            cur.execute("SELECT COUNT(*) FROM referrals WHERE referrer=?", (uid,))
+            total_refs = cur.fetchone()[0]
+            ad_msg = f"🚀 <b>Join Think2Earn!</b>\nSolve puzzles and earn ₱1,000+ GCash easily. 👉 {link}"
+            await update.message.reply_text(f"👥 <b>Your Referral Link:</b>\n<code>{link}</code>\n\n🎁 Earn ₱{REFERRAL_REWARD} per friend!\n📈 Total Referrals: {total_refs}\n\n📢 <b>Advertising Message:</b>\n<pre>{ad_msg}</pre>", parse_mode="HTML")
+            return
 
-    elif text == "📜 Rules":
-        rules = (
-            "📜 <b>Terms & Conditions:</b>\n"
-            "1. Maximum 5 puzzles per 24 hours.\n"
-            "2. Streak bonus applied for 3+ consecutive wins.\n"
-            "3. Payouts processed within 24-48 hours.\n"
-            "4. Anti-fraud system checks for duplicate accounts.\n"
-            "5. Any attempt to exploit math logic results in permanent ban."
-        )
-        await update.message.reply_text(rules, parse_mode="HTML")
-        return
+        elif text == "🏆 Leaderboard":
+            cur.execute("SELECT username, balance FROM users ORDER BY balance DESC LIMIT 10")
+            rows = cur.fetchall()
+            lb = "🏆 <b>TOP 10 EARNERS</b>\n\n"
+            for i, r in enumerate(rows, 1):
+                lb += f"{i}. {r[0] or 'User'} — ₱{r[1]:.2f}\n"
+            await update.message.reply_text(lb, parse_mode="HTML")
+            return
 
-    elif text == "💸 Withdraw":
-        await update.message.reply_text("Choose Withdrawal Method:", reply_markup=InlineKeyboardMarkup([
-            [InlineKeyboardButton("GCash", callback_data="wd_gcash"), InlineKeyboardButton("PayMaya", callback_data="wd_paymaya")]
-        ]))
-        return
+        elif text == "📜 Rules":
+            rules = "📜 <b>Terms & Conditions:</b>\n1. Max 5 puzzles/day.\n2. Streak bonus for 3+ wins.\n3. Payouts in 24-48h."
+            await update.message.reply_text(rules, parse_mode="HTML")
+            return
 
-    # Process Pending
+        elif text == "💸 Withdraw":
+            await update.message.reply_text("Choose Withdrawal Method:", reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("GCash", callback_data="wd_gcash"), InlineKeyboardButton("PayMaya", callback_data="wd_paymaya")]]))
+            return
+
+    # Process Pending Actions (Answers/Withdrawals)
     if uid in pending:
         data = pending[uid]
         
         # Checking puzzle answer
         if "answer" in data:
             pending.pop(uid)
-            if text.strip().lower() == str(data["answer"]).lower():
+            user_ans = text.strip().lower()
+            correct_ans = str(data["answer"]).lower()
+            
+            if user_ans == correct_ans:
                 reward = REWARDS[data["level"]]
                 cur.execute("UPDATE users SET balance = balance + ?, streak = streak + 1, puzzles_done_today = puzzles_done_today + 1 WHERE user_id = ?", (reward, uid))
                 db.commit()
                 user = get_user(uid)
-                await update.message.reply_text(f"✨ <b>Correct!</b>\nReward: +₱{reward}\n💰 Total Balance: ₱{user[0]:.2f}\n🔥 Streak: {user[1]}", parse_mode="HTML", reply_markup=main_menu_keyboard())
+                await update.message.reply_text(f"✨ <b>Correct!</b>\nReward: +₱{reward}\n💰 Balance: ₱{user[0]:.2f}\n🔥 Streak: {user[1]}", parse_mode="HTML", reply_markup=main_menu_keyboard())
             else:
                 cur.execute("UPDATE users SET streak = 0, puzzles_done_today = puzzles_done_today + 1 WHERE user_id = ?", (uid,))
                 db.commit()
-                await update.message.reply_text(f"❌ <b>Incorrect.</b>\nAnswer was: {data['answer']}\nStreak broken!", reply_markup=main_menu_keyboard())
+                await update.message.reply_text(f"❌ <b>Incorrect.</b>\nAnswer: {data['answer']}\nStreak broken!", reply_markup=main_menu_keyboard())
             return
 
         # Withdrawal sequence
         if "step" in data:
-            step = data["step"]
-            if step == "GET_NAME":
-                data["acc_name"] = text
-                data["step"] = "GET_NUMBER"
-                await update.message.reply_text(f"📱 Enter {data['wd_method']} Account Number:", reply_markup=cancel_keyboard())
-            elif step == "GET_NUMBER":
-                data["acc_num"] = text
-                data["step"] = "GET_AMOUNT"
+            if data["step"] == "GET_NAME":
+                data["acc_name"], data["step"] = text, "GET_NUMBER"
+                await update.message.reply_text(f"📱 Enter {data['wd_method']} Number:", reply_markup=cancel_keyboard())
+            elif data["step"] == "GET_NUMBER":
+                data["acc_num"], data["step"] = text, "GET_AMOUNT"
                 await update.message.reply_text("💰 Enter Amount (Min ₱1000):", reply_markup=cancel_keyboard())
-            elif step == "GET_AMOUNT":
+            elif data["step"] == "GET_AMOUNT":
                 try:
                     amt = float(text)
                     user = get_user(uid)
                     if amt < MIN_WITHDRAW or user[0] < amt:
                         await update.message.reply_text("❌ Insufficient balance or amount too low.")
                         return
-                    data["amt"] = amt
-                    data["step"] = "CONFIRM"
-                    confirm_txt = (
-                        f"⚠️ <b>Confirm Details</b>\n\n"
-                        f"Method: {data['wd_method']}\n"
-                        f"Name: {data['acc_name']}\n"
-                        f"Number: {data['acc_num']}\n"
-                        f"Amount: ₱{amt}\n\n"
-                        f"Is this correct?"
-                    )
-                    kb = [[InlineKeyboardButton("✅ Confirm", callback_data="confirm_wd"), InlineKeyboardButton("❌ Cancel", callback_data="cancel_wd")]]
-                    await update.message.reply_text(confirm_txt, reply_markup=InlineKeyboardMarkup(kb), parse_mode="HTML")
+                    data["amt"], data["step"] = amt, "CONFIRM"
+                    confirm_txt = f"⚠️ <b>Confirm Details</b>\nMethod: {data['wd_method']}\nName: {data['acc_name']}\nNumber: {data['acc_num']}\nAmount: ₱{amt}\n\nIs this correct?"
+                    await update.message.reply_text(confirm_txt, reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("✅ Confirm", callback_data="confirm_wd"), InlineKeyboardButton("❌ Cancel", callback_data="cancel_wd")]]), parse_mode="HTML")
                 except: await update.message.reply_text("❌ Enter a valid number.")
             return
 
@@ -295,7 +280,11 @@ async def on_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             pending[uid]["step"] = "AWAIT_PROOF"
             method = pending[uid]["wd_method"]
             num = ADMIN_GCASH if method == "GCash" else ADMIN_PAYMAYA
-            await query.message.reply_text(f"🛡 <b>Verification Fee Required</b>\nPay ₱{WITHDRAW_FEE} to {num} and send screenshot of receipt.", parse_mode="HTML")
+            await query.message.reply_text(f"🛡 <b>Verification Fee Required</b>\nPay ₱{WITHDRAW_FEE} to {num} and send screenshot.", parse_mode="HTML")
+
+    elif data == "cancel_wd":
+        if uid in pending: pending.pop(uid)
+        await query.message.edit_text("Withdrawal cancelled.")
 
     elif data.startswith("app_"): 
         _, target_id, amount = data.split("_")
